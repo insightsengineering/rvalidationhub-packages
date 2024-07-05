@@ -1,0 +1,150 @@
+---
+title: "Validated R packages"
+format:
+   html: 
+    output-file: "index"
+    output-ext:  "html"
+---
+
+## Context
+
+This document summarises validated R packages by R version as it was ot 
+`r Sys.time()`.
+
+It is important to note R package functionality is validated via a risk based 
+approach, and package functionality is tested and documented against specific
+environments as a rolling cohort. R packages are not intended to be used 
+outside the 'snapshot' they were validated within. In this repo you cannot see the environments we use, or how the 
+package cohorts are defined temporally so cannot assume the packages will be stable on your environment and with a different cohort of package versions.
+
+A small number of validated packages are not open sourced, usually as they are specific to our infrastructure (e.g. wrappers to simplify working against our Redshift, S3 or Snowflake instances).
+
+We do not currently have a concept of 'validated shiny' applications, as they are 
+developed via a business process and considered study code (so go through risk assessment not validated). As such shiny 
+specific packages are not validated today. We are beginning the process of 
+validating shiny packages, independent of whether a shiny app can be validated or not.
+
+## Output
+
+A table is shown in the footer of this document, and a parquet file is saved in the root of this repo [`validated_packages.parquet`](validated_packages.parquet).
+
+## Code
+
+```{r,results='hide', warning=FALSE, message=FALSE}
+library(httr)
+library(stringr)
+library(dplyr)
+library(glue)
+library(tibble)
+library(purrr)
+library(tidyr)
+library(gt)
+library(arrow)
+```
+
+```{r}
+
+# variables
+host <- "https://packages.roche.com/"
+
+# get all repos
+response <- httr::content(httr::GET(
+  paste0(host, "__api__/repos")
+))
+
+# flatten response into a tibble
+tibble_repos <- tibble(
+  id = unlist(map(response, "id")),
+  name = unlist(map(response, "name"))
+  ) |>
+  # keeping only validated
+  dplyr::filter(
+    str_detect(`name`,pattern = "^Validated")
+  ) |>
+  # new column for R version
+  dplyr::mutate(
+    r_version = str_extract(`name`, pattern = "\\d+\\.\\d+")
+  ) |>
+  # remove 3.10
+  filter(r_version != "3.10")
+  
+# get all packages for a repo
+validated_packages <- tibble()
+for (i in 1:nrow(tibble_repos)) {
+  # take single repo
+  i_row <- slice(tibble_repos,i)
+  # raw list of current packages
+  response <- httr::content(httr::GET(
+    glue("{host}__api__/repos/{i_row$id}/packages?_limit=1000")
+  ))
+  # package version live right now
+  tibble_packages <- tibble(
+    r_version = i_row$r_version,
+    name = unlist(map(response, "name")),
+    version = unlist(map(response, "version"))
+  ) 
+  # get archives
+  for (j in 1:nrow(tibble_packages)) {
+    
+    j_row <- slice(tibble_packages,j)
+    
+    # get package details
+    response <- httr::content(httr::GET(
+      glue("{host}__api__/repos/{i_row$id}/packages/{j_row$name}")
+    ))
+    
+    validated_packages <- j_row |>
+      bind_rows(validated_packages)
+    
+    # archived
+    if (!is.null(response$archived)){
+      archived_packages <- tibble(
+        r_version = i_row$r_version,
+        name = unlist(map(response$archived, "name")),
+        version = unlist(map(response$archived, "version"))
+        ) 
+      
+      validated_packages <- validated_packages |>
+        bind_rows(archived_packages)
+    }
+
+  }
+}
+
+# Ordering
+validated_packages <- validated_packages |>
+  arrange(
+    r_version,
+    name,
+    version
+  )
+
+# Save copy
+write_parquet(validated_packages, "validated_packages.parquet")
+
+# wide table
+validated_packages |>
+  tidyr::pivot_wider(
+    names_from = r_version,
+    values_from = version,
+    values_fn = list
+  ) |>
+  arrange(name) |>
+  gt() |>
+  tab_header(
+    title = "Validated R packages",
+    subtitle = glue("Generated on {Sys.Date()}")
+  ) |>
+  opt_interactive(
+    use_search = TRUE,
+    use_filters = TRUE,
+    use_resizers = TRUE,
+    use_highlight = TRUE,
+    use_compact_mode = TRUE,
+    use_text_wrapping = FALSE,
+    use_page_size_select = TRUE
+  )
+
+
+
+```
