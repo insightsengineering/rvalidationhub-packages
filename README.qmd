@@ -8,6 +8,8 @@ format:
 
 ## Context
 
+The code and license is at [github.com/insightsengineering/rvalidationhub-packages](https://github.com/insightsengineering/rvalidationhub-packages).
+
 This document summarises validated R packages by R version as it was ot 
 `r Sys.time()`.
 
