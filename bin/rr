@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+
+import subprocess
+from time import sleep
+import logging
+import argparse
+import os
+import re
+
+# Global variable to hold log in memory
+PROCESS_LOG = []
+
+
+def process_args(args):
+    # De-listing
+    args.file = args.file[0]
+    args.rmdtype = args.rmdtype[0]
+    args.logdir = args.logdir[0]
+    args.outdir = args.outdir[0]
+    args.suffix = args.suffix[0]
+    
+    if args.suffix != "":
+        args.suffix = "_" + args.suffix
+    
+    # De-construct the file name / path
+    args.base = os.path.basename(args.file)
+    args.base_ext = os.path.splitext(args.base)
+    args.logfile = "{}{}.log".format(args.base_ext[0], args.suffix)
+    args.logpath = os.path.join(args.logdir, args.logfile)
+    args.outfile = "{}{}.{}".format(args.base_ext[0], args.suffix, args.rmdtype)
+    return args
+
+
+def stream_process(process):
+    go = process.poll() is None
+    for line in process.stdout:
+        log_line = line.decode("utf-8").strip()
+        PROCESS_LOG.append(log_line)
+        logger.info(log_line)
+    return go
+
+
+def get_command(args):
+    TYPEMAP = {
+        "html": "html_document",
+        "pdf": "pdf_document"
+    }
+
+    TEMPLATE_RMD = """\
+        Rscript -e 'rmarkdown::render(\
+            input = "{input}",\
+            output_file = "{output_file}",\
+            output_dir =  "{output_dir}",\
+            output_format = "{output_format}",\
+            params = list({args}),\
+            knit_root_dir = "{cwd}",\
+            intermediates_dir = tempfile()\
+        )'\
+    """.format(
+            input=args.file,
+            output_file=args.outfile,
+            output_dir=args.outdir,
+            args=",".join(args.args).replace('"','\\"').replace("'","\\'"),
+            output_format=TYPEMAP[args.rmdtype],
+            cwd=os.getcwd()
+        )
+
+    TEMPLATE_R = """\
+        Rscript {file} {args}\
+    """.format(
+            file=args.file,
+            args=" ".join(args.args)
+        )
+
+    if args.base_ext[1] == ".R":
+        CMD = TEMPLATE_R
+    elif args.base_ext[1] == ".Rmd":
+        CMD = TEMPLATE_RMD
+    else:
+        print("Invalid file type! This script only supports .R and .Rmd")
+        exit(1)
+    return CMD
+
+
+def get_logger(args):
+    # set a format which is simpler for console use
+    formater = logging.Formatter('%(message)s')
+    # Setup logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    if not args.nologfile:
+        os.makedirs(os.path.dirname(args.logpath), exist_ok=True)
+        console_file = logging.FileHandler(filename=args.logpath, mode="w")
+        console_file.setFormatter(formater)
+        logger.addHandler(console_file)
+    if not args.nologterm:
+        console_stream = logging.StreamHandler()
+        console_stream.setFormatter(formater)
+        logger.addHandler(console_stream)
+    return logger
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(
+        description='Execute R code capturing the log and process for errors'
+    )
+
+    parser.add_argument(
+        "-l",
+        dest="logdir",
+        metavar="<Log Directory>",
+        help="Directory to save logs to (default = ./log/)",
+        default=["log"],
+        type=str,
+        nargs=1,
+    )
+
+    parser.add_argument(
+        "-t",
+        dest="rmdtype",
+        metavar="<type>",
+        help="Rmd Output Type. Options are 'html' (default) and 'pdf'",
+        default=["html"],
+        choices=['html', 'pdf'],
+        type=str,
+        nargs=1,
+    )
+
+    parser.add_argument(
+        "-o",
+        dest="outdir",
+        metavar="<Output Directory>",
+        help="Output directory for Rmd programs (default = ./output/)",
+        default=["output"],
+        type=str,
+        nargs=1,
+    )
+
+    parser.add_argument(
+        "-s",
+        dest="suffix",
+        metavar="<Output Suffix>",
+        help="Additional string to add onto the end of the output & log file name",
+        default=[""],
+        type=str,
+        nargs=1,
+    )
+
+    parser.add_argument(
+        "file",
+        metavar="<filename>.R[md]",
+        help="File to be executed",
+        type=str,
+        nargs=1
+    )
+
+    parser.add_argument(
+        "args",
+        metavar="<arguments>",
+        help="Arguments passed onto Rscript for *.R files or onto `params` for *.Rmd",
+        type=str,
+        nargs="*"
+    )
+
+    parser.add_argument(
+        "--nologfile",
+        help="Supresses logging to the log file",
+        default=False,
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--nologterm",
+        help="Supresses logging to the terminal",
+        default=False,
+        action="store_true"
+    )
+
+    args = process_args(parser.parse_args())
+
+    CMD = get_command(args)
+
+    logger = get_logger(args)
+
+    process = subprocess.Popen(
+        CMD,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT
+    )
+
+    while stream_process(process):
+        sleep(0.1)
+
+    has_warning = True if any([re.search("^Warning ", i) for i in PROCESS_LOG]) else False
+
+    CODE = process.returncode
+
+    if has_warning and CODE == 0:
+        print("ERROR: Program exited with warnings!")
+        exit(2)
+    else:
+        exit(CODE)
+
+

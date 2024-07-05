@@ -1,0 +1,13 @@
+# Define CI/CD pipelines
+# For more information:
+# https://docs.code.roche.com/cicd/intro
+# https://docs.gitlab.com/ee/ci/yaml/
+
+# Manual code check
+Code-Check-Super-Linter:
+  image: registry.code.roche.com/cicd-utilities/super-linter:edge
+  when: manual
+  variables:
+      FILTER_REGEX_INCLUDE: .*\.[rR]|.*\.[RrQq]md|.*\.py
+  script:
+  - super-linter
