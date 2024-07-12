@@ -10,7 +10,7 @@ format:
 
 The code and license is at [github.com/insightsengineering/rvalidationhub-packages](https://github.com/insightsengineering/rvalidationhub-packages).
 
-This document summarises validated R packages by R version as it was ot 
+This document summarises validated R packages by R version as it was at 
 `r Sys.time()`.
 
 It is important to note R package functionality is validated via a risk based 
@@ -21,10 +21,9 @@ package cohorts are defined temporally so cannot assume the packages will be sta
 
 A small number of validated packages are not open sourced, usually as they are specific to our infrastructure (e.g. wrappers to simplify working against our Redshift, S3 or Snowflake instances).
 
-We do not currently have a concept of 'validated shiny' applications, as they are 
-developed via a business process and considered study code (so go through risk assessment not validated). As such shiny 
-specific packages are not validated today. We are beginning the process of 
-validating shiny packages, independent of whether a shiny app can be validated or not.
+We do not currently have a concept of 'validated' Shiny applications (we do 
+have a business process, in the same way study code is QC'd, not 'validated' 
+via a CSV process).
 
 ## Output
 
@@ -42,9 +41,30 @@ library(purrr)
 library(tidyr)
 library(gt)
 library(arrow)
+library(tictoc)
 ```
 
 ```{r}
+#| label: setup
+#| echo: false
+
+
+knitr::knit_hooks$set(timeit = function(before, options, envir) {
+    if(before) {
+      ## code to be run before a chunk
+      tic()
+    } else {
+      ## code to be run after a chunk
+      elapsed = toc()$toc
+      print(paste0("Execution took ", elapsed, " seconds"))
+    }
+})
+
+```
+
+```{r}
+#| timeit: true
+
 
 # variables
 host <- "https://packages.roche.com/"
@@ -85,6 +105,8 @@ for (i in 1:nrow(tibble_repos)) {
     name = unlist(map(response, "name")),
     version = unlist(map(response, "version"))
   ) 
+  # Check no pagination
+  if (length(response) > 999) stop("Pagination not implemented: 1000+ packages in a repo.")
   # get archives
   for (j in 1:nrow(tibble_packages)) {
     
@@ -135,15 +157,15 @@ validated_packages |>
   gt() |>
   tab_header(
     title = "Validated R packages",
-    subtitle = glue("Generated on {Sys.Date()}")
+    subtitle = glue("Generated on {Sys.Date()}, grouped by R version validated against")
   ) |>
   opt_interactive(
     use_search = TRUE,
     use_filters = TRUE,
     use_resizers = TRUE,
     use_highlight = TRUE,
-    use_compact_mode = TRUE,
-    use_text_wrapping = FALSE,
+    use_compact_mode = FALSE,
+    use_text_wrapping = TRUE,
     use_page_size_select = TRUE
   )
 
